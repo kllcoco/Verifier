@@ -57,3 +57,13 @@ def verify_ledger(path: Path) -> str:
                 raise ValueError(f"invalid ledger hash at line {number}")
             prev = claimed
     return prev
+
+
+def ledger_contains_hash(path: Path, target: str) -> bool:
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            if json.loads(line).get("entry_hash") == target:
+                return True
+    return False

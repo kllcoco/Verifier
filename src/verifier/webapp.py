@@ -54,16 +54,37 @@ class AppState:
         if self.run_dir:
             self._active_path().write_text(json.dumps({"run_dir": str(self.run_dir)}), encoding="utf-8")
 
+    def _configuration_state(self) -> tuple[Any | None, list[str]]:
+        issues: list[str] = []
+        if not self.config_path.is_file():
+            issues.append(f"configuration missing: {self.config_path.name}")
+            config = None
+        else:
+            try:
+                config = load_config(self.config_path)
+            except Exception as exc:
+                issues.append(f"configuration invalid: {exc}")
+                config = None
+        if not self.baseline.exists():
+            issues.append(f"baseline model missing: {self.baseline.name}")
+        return config, issues
+
     def status(self) -> dict[str, Any]:
-        config = load_config(self.config_path)
-        hardware = probe_host(self.workspace, self.baseline)
+        config, setup_issues = self._configuration_state()
+        hardware = probe_host(self.workspace, self.baseline if self.baseline.exists() else None)
+        if config is None:
+            ready = {"ready": False, "issues": setup_issues}
+        else:
+            ready = readiness(hardware, require_gpu=bool(config.limits.gpus))
+            if setup_issues:
+                ready = {"ready": False, "issues": [*setup_issues, *ready["issues"]]}
         result: dict[str, Any] = {
             "phase": self.phase,
             "busy": self.busy,
             "message": self.message,
             "error": self.error,
             "hardware": hardware,
-            "readiness": readiness(hardware, require_gpu=bool(config.limits.gpus)),
+            "readiness": ready,
         }
         if self.run_dir:
             result["run_dir"] = str(self.run_dir)
@@ -74,6 +95,16 @@ class AppState:
         if self.report_path and self.report_path.is_file():
             result["report"] = json.loads(self.report_path.read_text(encoding="utf-8"))
         return result
+
+    def _require_ready(self):
+        config, issues = self._configuration_state()
+        if config is None or issues:
+            raise RuntimeError("; ".join(issues) or "verifier is not configured")
+        hardware = probe_host(self.workspace, self.baseline)
+        state = readiness(hardware, require_gpu=bool(config.limits.gpus))
+        if not state["ready"]:
+            raise RuntimeError("; ".join(state["issues"]))
+        return config
 
     def _start(self, target, phase: str) -> None:
         with self.lock:
@@ -96,8 +127,9 @@ class AppState:
         threading.Thread(target=worker, daemon=True).start()
 
     def start_training(self, train_path: Path, nonce: str | None) -> None:
+        config = self._require_ready()
         def work():
-            run_dir = train_session(load_config(self.config_path), self.config_path, self.baseline, train_path, self.workspace / "runs", nonce or None)
+            run_dir = train_session(config, self.config_path, self.baseline, train_path, self.workspace / "runs", nonce or None)
             receipt = json.loads((run_dir / "train_receipt.json").read_text(encoding="utf-8"))
             with self.lock:
                 self.run_dir = run_dir
@@ -153,7 +185,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self._auth():
                 self._json(403, {"error": "forbidden"})
                 return
-            self._json(200, self.app.status())
+            try:
+                self._json(200, self.app.status())
+            except Exception as exc:
+                self._json(500, {"error": str(exc)})
             return
         self._json(404, {"error": "not found"})
 

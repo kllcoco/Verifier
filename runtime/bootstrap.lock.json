@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "python": {
+    "version": "3.13.14",
+    "url": "https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip",
+    "sha256": "90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907"
+  },
+  "docker": {
+    "installer_url": "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe"
+  },
+  "app": {
+    "config": "verifier.toml",
+    "baseline": "model",
+    "workspace": "verifier-runs",
+    "host": "127.0.0.1",
+    "port": 8765
+  }
+}

@@ -30,24 +30,28 @@ class DockerRunner:
     def __init__(self, limits: LimitConfig):
         self.limits = limits
 
+    @staticmethod
+    def _env() -> dict[str, str]:
+        return {"PATH": os.environ.get("PATH", "")}
+
     def check(self) -> str:
         proc = subprocess.run(
             ["docker", "version", "--format", "{{.Server.Version}}"],
             check=True,
             text=True,
             capture_output=True,
-            env={"PATH": os.environ.get("PATH", "")},
+            env=self._env(),
         )
         return proc.stdout.strip()
 
     def image_identity(self, image: str) -> str:
-        proc = subprocess.run(
-            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
-            check=True,
-            text=True,
-            capture_output=True,
-            env={"PATH": os.environ.get("PATH", "")},
-        )
+        inspect = ["docker", "image", "inspect", "--format", "{{.Id}}", image]
+        proc = subprocess.run(inspect, text=True, capture_output=True, env=self._env())
+        if proc.returncode != 0:
+            pull = subprocess.run(["docker", "pull", image], text=True, capture_output=True, env=self._env())
+            if pull.returncode != 0:
+                raise RuntimeError(f"docker image unavailable: {pull.stderr[-4000:]}")
+            proc = subprocess.run(inspect, check=True, text=True, capture_output=True, env=self._env())
         value = proc.stdout.strip()
         if not value.startswith("sha256:"):
             raise RuntimeError("docker image did not resolve to a content identity")
@@ -111,9 +115,9 @@ class DockerRunner:
                     stdout=stdout_file,
                     stderr=stderr_file,
                     timeout=max(1.0, timeout_seconds),
-                    env={"PATH": os.environ.get("PATH", "")},
+                    env=self._env(),
                 )
             except subprocess.TimeoutExpired:
-                subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=self._env())
                 raise TimeoutError(f"container exceeded {timeout_seconds:.1f}s")
         return ExecutionResult(time.monotonic() - started, proc.returncode, stdout_path, stderr_path, image_id)
